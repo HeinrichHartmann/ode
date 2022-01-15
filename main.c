@@ -1,3 +1,4 @@
+#include <gsl/gsl_sf_bessel.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -49,7 +50,21 @@ void heun_step(pt *p) {
   p->v = eta.v + delta.v * STEP / 2;
 }
 
+#include <gsl/gsl_block.h>
+
 int main(int argc, char **argv) {
+  gsl_block *b = gsl_block_alloc(100);
+
+  printf("length of block = %zu\n", b->size);
+  printf("block data address = %p\n", b->data);
+
+  gsl_block_free(b);
+  return 0;
+  double x = 5.0;
+  double y = gsl_sf_bessel_J0(x);
+  printf("J0(%g) = %.18e\n", x, y);
+  return 0;
+
   long stop = -1;
   if (argc > 1) {
     stop = strtol(*(argv + 1), (char **)NULL, 10);
