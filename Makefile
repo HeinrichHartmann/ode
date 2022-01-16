@@ -1,9 +1,8 @@
 LIBS = raylib gsl
 LDFLAGS=-all-static $(shell pkg-config --libs $(LIBS))
-CFLAGS=$(shell pkg-config --cflags $(LIBS))
+CFLAGS=-O0 -g $(shell pkg-config --cflags $(LIBS))
 
 all: main gsl_ode ray ray.html ray_ode
-
 
 %.html: %.c
 	# clang gsl_ex.c -o example -O2 --target=wasm32-wasi

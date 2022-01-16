@@ -52,26 +52,39 @@ Vector2 sim2scr(Vector2 a) {
 }
 
 typedef struct {
+  double x;
+  double vx;
+  double y;
+  double vy;
+} VState;
+
+//
+// VTail
+//
+typedef struct {
   int n;
   int fill;      // contraint: fill < n
   Vector2 *data; // contraint: points to allocated n-elements
 } VTail;
 
-void VTail_print(VTail *tp) {
-  printf("VTail<n=%d,fill=%d,data=%p>", tp->n, tp->fill, tp->data);
+void VTail_print(VTail *t) {
+  printf("VTail<n=%d,fill=%d,data=%p>", t->n, t->fill, t->data);
 }
 
-VTail VTail_alloc(int n) {
-  VTail out;
-  out.n = n;
-  out.fill = 0;
-  out.data = calloc(n, sizeof(Vector2));
-  return out;
+VTail *VTail_alloc(int n) {
+  VTail *t = calloc(1, sizeof(VTail));
+  t->n = n;
+  t->fill = 0;
+  t->data = calloc(n, sizeof(Vector2));
+  return t;
 }
 
 void VTail_clear(VTail *t) { t->fill = 0; }
 
 void VTail_push(VTail *t, Vector2 a) {
+  if (t->n == 0) {
+    return;
+  }
   // advance elements in t.data
   for (int tar = t->fill; tar > 0; tar--) {
     int src = tar - 1;
@@ -85,82 +98,105 @@ void VTail_push(VTail *t, Vector2 a) {
   t->data[0] = a;
 }
 
+//
+// Planet
+//
 typedef struct {
-  double *y;
-  double t;
-  VTail tail;
+  VState state;
   Color color;
+  VTail *tail;
 } Planet;
 
-Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color) {
-  Planet *out = calloc(1, sizeof(Planet));
-  out->y = calloc(4, sizeof(double));
-  out->y[0] = pos.x;
-  out->y[1] = vel.x;
-  out->y[2] = pos.y;
-  out->y[3] = vel.y;
-  out->color = color;
-  out->tail = VTail_alloc(tail_len);
-  return out;
+Planet *Planet_alloc(Vector2 pos, Vector2 vel) {
+  Planet *p = calloc(1, sizeof(Planet));
+  p->state.x = pos.x;
+  p->state.y = pos.y;
+  p->state.vx = vel.x;
+  p->state.vy = vel.y;
+  p->tail = VTail_alloc(50);
+  p->color = MAROON;
+  return p;
 }
 
-void Planet_step(Planet *p, gsl_odeiv2_driver *d) {
-  double t = 0;
-  gsl_odeiv2_driver_apply(d, &t, STEP, p->y);
+void Planet_print(Planet *p) {
+  printf("Planet< %.3f + %.3f ; %.3f + %.3f >\n", p->state.x, p->state.vx,
+         p->state.y, p->state.vy);
 }
 
-Vector2 Planet_pos(Planet *p) { return V(p->y[0], p->y[2]); }
+Vector2 Planet_pos(Planet *p) { return V(p->state.x, p->state.y); }
 
-Vector2 Planet_vel(Planet *p) { return V(p->y[1], p->y[3]); }
+Vector2 Planet_vel(Planet *p) { return V(p->state.vx, p->state.vy); }
 
 void Planet_draw(Planet *p) {
   float h = 1.0f / 5.0f;
   DrawCircleV(sim2scr(Planet_pos(p)), 4, MAROON);
   // DrawLineV(sim2scr(Planet_pos(p)), sim2scr(Vsum(Planet_pos(p),
   // Vscale(Planet_vel(p), h))), BLUE);
-  VTail_push(&p->tail, Planet_pos(p));
-  for (int i = 0; i < p->tail.fill; i++) {
-    DrawCircleV(sim2scr(p->tail.data[i]), 1, MAROON);
+  VTail_push(p->tail, Planet_pos(p));
+  for (int i = 0; i < p->tail->fill; i++) {
+    DrawCircleV(sim2scr(p->tail->data[i]), 1, MAROON);
   }
 }
 
 void Planet_set(Planet *p, Vector2 pos, Vector2 vel) {
-  p->y[0] = pos.x;
-  p->y[1] = vel.x;
-  p->y[2] = pos.y;
-  p->y[3] = vel.y;
-  VTail_clear(&p->tail);
+  p->state.x = pos.x;
+  p->state.y = pos.y;
+  p->state.vx = vel.x;
+  p->state.vy = vel.y;
+  VTail_clear(p->tail);
 }
 
+//
+// Planet System
+//
 typedef struct {
   int n;
   Planet **planets;
-  float center_mass;
+  VState *state;
   gsl_odeiv2_system *sys;
   gsl_odeiv2_driver *driver;
 } PSystem;
 
-PSystem *PSystem_alloc(float center_mass) {
+PSystem *PSystem_alloc() {
   PSystem *ps = calloc(1, sizeof(PSystem));
   ps->sys = calloc(1, sizeof(gsl_odeiv2_system));
   ps->sys->function = func;
   ps->sys->jacobian = NULL;
-  ps->sys->dimension = 4;
+  ps->sys->dimension = 4; // ps->n * 4;
   ps->sys->params = ps;
   ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
                                              1e-6, 0.0);
   return ps;
 }
 
+void PSystem_print(PSystem *ps) {
+  printf("PSystem<n=%d,state=[", ps->n);
+  for (int i = 0; i < ps->n; i++) {
+    printf("%.3f,", ps->state[i].x);
+    printf("%.3f,", ps->state[i].vx);
+    printf("%.3f,", ps->state[i].y);
+    printf("%.3f; ", ps->state[i].vy);
+  }
+  printf("]>\n");
+}
+
 void PSystem_add(PSystem *ps, Planet *p) {
   ps->n += 1;
   ps->planets = realloc(ps->planets, sizeof(Planet *) * ps->n);
   ps->planets[ps->n - 1] = p;
+
+  ps->state = calloc(ps->n, sizeof(VState));
+  PSystem_print(ps);
 }
 
 void PSystem_step(PSystem *ps) {
+  if (!ps->n) {
+    return;
+  }
   for (int i = 0; i < ps->n; i++) {
-    Planet_step(ps->planets[i], ps->driver);
+    Planet *p = ps->planets[i];
+    double t = 0;
+    gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)(&p->state));
   }
 }
 
@@ -175,7 +211,7 @@ int main(void) {
   SetTargetFPS(FPS);
 
   // Simulation State
-  PSystem *ps = PSystem_alloc(1);
+  PSystem *ps = PSystem_alloc();
 
   // UI state
   int select = 0;
@@ -196,7 +232,7 @@ int main(void) {
     } else if (select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Vector2 a = scr2sim(mousePos0);
       Vector2 b = scr2sim(GetMousePosition());
-      PSystem_add(ps, Planet_alloc(a, Vdiff(b, a), 50, MAROON));
+      PSystem_add(ps, Planet_alloc(a, Vdiff(b, a)));
       select = 0;
     }
     if (select) {
