@@ -6,13 +6,42 @@
 #include <gsl/gsl_odeiv2.h>
 #include <stdio.h>
 
+typedef struct {
+  double x;
+  double vx;
+  double y;
+  double vy;
+} VState;
+
+typedef struct {
+  int n;
+  int fill;      // contraint: fill < n
+  Vector2 *data; // contraint: points to allocated n-elements
+} VTail;
+
+typedef struct {
+  VState state;
+  Color color;
+  VTail *tail;
+} Planet;
+
+typedef struct {
+  int n;
+  Planet **planets;
+  VState *state;
+  gsl_odeiv2_system *sys;
+  gsl_odeiv2_driver *driver;
+} PSystem;
+
 int func(double t, const double y[], double f[], void *params) {
   (void)(t); /* avoid unused parameter warning */
-  (void)(params);
-  f[0] = y[1];  // x
-  f[1] = -y[0]; // x'
-  f[2] = y[3];  // y
-  f[3] = -y[2]; // y'
+  PSystem *ps = (PSystem*) params;
+  for (int i = 0; i < ps->n; i++) {
+    f[4*i + 0] = y[4*i + 1];  // x
+    f[4*i + 1] = -y[4*i + 0]; // x'
+    f[4*i + 2] = y[4*i + 3];  // y
+    f[4*i + 3] = -y[4*i + 2]; // y'
+  }
   return GSL_SUCCESS;
 }
 
@@ -50,22 +79,9 @@ Vector2 sim2scr(Vector2 a) {
   return V((float)screenWidth / 2 + a.x * screenScale,
            (float)screenHeight / 2 - a.y * screenScale);
 }
-
-typedef struct {
-  double x;
-  double vx;
-  double y;
-  double vy;
-} VState;
-
 //
 // VTail
 //
-typedef struct {
-  int n;
-  int fill;      // contraint: fill < n
-  Vector2 *data; // contraint: points to allocated n-elements
-} VTail;
 
 void VTail_print(VTail *t) {
   printf("VTail<n=%d,fill=%d,data=%p>", t->n, t->fill, t->data);
@@ -101,11 +117,6 @@ void VTail_push(VTail *t, Vector2 a) {
 //
 // Planet
 //
-typedef struct {
-  VState state;
-  Color color;
-  VTail *tail;
-} Planet;
 
 Planet *Planet_alloc(Vector2 pos, Vector2 vel) {
   Planet *p = calloc(1, sizeof(Planet));
@@ -149,23 +160,9 @@ void Planet_set(Planet *p, Vector2 pos, Vector2 vel) {
 //
 // Planet System
 //
-typedef struct {
-  int n;
-  Planet **planets;
-  VState *state;
-  gsl_odeiv2_system *sys;
-  gsl_odeiv2_driver *driver;
-} PSystem;
 
 PSystem *PSystem_alloc() {
   PSystem *ps = calloc(1, sizeof(PSystem));
-  ps->sys = calloc(1, sizeof(gsl_odeiv2_system));
-  ps->sys->function = func;
-  ps->sys->jacobian = NULL;
-  ps->sys->dimension = 4; // ps->n * 4;
-  ps->sys->params = ps;
-  ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
-                                             1e-6, 0.0);
   return ps;
 }
 
@@ -185,6 +182,14 @@ void PSystem_add(PSystem *ps, Planet *p) {
   ps->planets = realloc(ps->planets, sizeof(Planet *) * ps->n);
   ps->planets[ps->n - 1] = p;
 
+  ps->sys = calloc(1, sizeof(gsl_odeiv2_system));
+  ps->sys->function = func;
+  ps->sys->jacobian = NULL;
+  ps->sys->dimension = ps->n * 4;
+  ps->sys->params = ps;
+  ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
+                                             1e-6, 0.0);
+
   ps->state = calloc(ps->n, sizeof(VState));
   PSystem_print(ps);
 }
@@ -195,8 +200,18 @@ void PSystem_step(PSystem *ps) {
   }
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
-    double t = 0;
-    gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)(&p->state));
+    *(ps->state + i) = p->state;
+  }
+
+  printf("STEP\n");
+  PSystem_print(ps);
+  double t = 0;
+  gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)ps->state);
+  PSystem_print(ps);
+
+  for (int i = 0; i < ps->n; i++) {
+    Planet *p = ps->planets[i];
+    p->state = *(ps->state+i);
   }
 }
 
