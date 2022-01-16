@@ -38,11 +38,29 @@ typedef struct {
 int func(double t, const double y[], double f[], void *params) {
   (void)(t); /* avoid unused parameter warning */
   PSystem *ps = (PSystem*) params;
+
+  memset(f, 0, sizeof(double) * ps->n * 4);
+
+  // INIT
   for (int i = 0; i < ps->n; i++) {
-    f[4*i + 0] = y[4*i + 1];  // x
-    f[4*i + 1] = y[4*i + 0] * (-1); // x'
-    f[4*i + 2] = y[4*i + 3];  // y
-    f[4*i + 3] = y[4*i + 2] * (-1); // y'
+    f[4*i + 0] = y[4*i + 1];
+    f[4*i + 2] = y[4*i + 3];
+  }
+  // Gravity towards center
+  float M = 0;
+  for (int i = 0; i < ps->n; i++) {
+    f[4*i + 1] += y[4*i + 0] * (-1) * M;
+    f[4*i + 3] += y[4*i + 2] * (-1) * M;
+  }
+  // Interactions
+  float C = 0.1;
+  for (int i = 0; i < ps->n; i++) {
+    for (int j = 0; j < ps->n; j++) {
+      if (i != j) {
+        f[4*i + 1] += - C * (y[4*i + 0] - y[4*j + 0]); // x'
+        f[4*i + 3] += - C * (y[4*i + 2] - y[4*j + 0]); // y'
+      }
+    }
   }
   return GSL_SUCCESS;
 }
@@ -140,9 +158,25 @@ Vector2 Planet_pos(Planet *p) { return V(p->state.x, p->state.y); }
 
 Vector2 Planet_vel(Planet *p) { return V(p->state.vx, p->state.vy); }
 
+void Planet_reflect(Planet *p) {
+  if(sim2scr(Planet_pos(p)).x < 0) {
+    p->state.vx = -p->state.vx;
+  }
+  if(sim2scr(Planet_pos(p)).y < 0) {
+    p->state.vy = -p->state.vy;
+  }
+  if(sim2scr(Planet_pos(p)).x > screenWidth) {
+    p->state.vx = -p->state.vx;
+  }
+  if(sim2scr(Planet_pos(p)).y > screenHeight) {
+    p->state.vy = -p->state.vy;
+  }
+}
+
 void Planet_draw(Planet *p) {
   float h = 1.0f / 5.0f;
   DrawCircleV(sim2scr(Planet_pos(p)), 4, MAROON);
+
   // DrawLineV(sim2scr(Planet_pos(p)), sim2scr(Vsum(Planet_pos(p),
   // Vscale(Planet_vel(p), h))), BLUE);
   VTail_push(p->tail, Planet_pos(p));
@@ -212,6 +246,7 @@ void PSystem_step(PSystem *ps) {
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
     p->state = ps->state[i];
+    Planet_reflect(p);
   }
 }
 
@@ -220,6 +255,7 @@ void PSystem_draw(PSystem *ps) {
     Planet_draw(ps->planets[i]);
   }
 }
+
 
 int main(void) {
   InitWindow(screenWidth, screenHeight, "Raylib Planets");
