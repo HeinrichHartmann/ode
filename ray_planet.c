@@ -21,36 +21,31 @@ const int screenWidth = 800;
 const int screenHeight = 600;
 const float screenScale = 200.0f;
 
-// Vector helpwers
-Vector2 Vadd(Vector2 a, Vector2 b) {
+//
+// Vector Helpers
+//
+Vector2 V(float x, float y) {
   Vector2 out;
-  out.x = a.x + b.x;
-  out.y = a.y + b.y;
+  out.x = x;
+  out.y = y;
   return out;
 }
 
-Vector2 Vscale(Vector2 a, float s) {
-  Vector2 out;
-  out.x = a.x * s;
-  out.y = a.y * s;
-  return out;
-}
+Vector2 Vsum(Vector2 a, Vector2 b) { return V(a.x + b.x, a.y + b.y); }
 
-Vector2 Vdiff(Vector2 a, Vector2 b) { return Vadd(a, Vscale(b, -1)); }
+Vector2 Vdiff(Vector2 a, Vector2 b) { return V(a.x - b.x, a.y - b.y); }
+
+Vector2 Vscale(Vector2 a, float s) { return V(a.x * s, a.y * s); }
 
 // Simulation coordinates around 0. Letter a,b
 Vector2 scr2sim(Vector2 P) {
-  Vector2 out;
-  out.x = (P.x - (float)screenWidth / 2) / screenScale;
-  out.y = -(P.y - (float)screenHeight / 2) / screenScale;
-  return out;
+  return V((P.x - (float)screenWidth / 2) / screenScale,
+           -(P.y - (float)screenHeight / 2) / screenScale);
 }
 
 Vector2 sim2scr(Vector2 a) {
-  Vector2 out;
-  out.x = (float)screenWidth / 2 + a.x * screenScale;
-  out.y = (float)screenHeight / 2 - a.y * screenScale;
-  return out;
+  return V((float)screenWidth / 2 + a.x * screenScale,
+           (float)screenHeight / 2 - a.y * screenScale);
 }
 
 int FPS = 100;
@@ -91,18 +86,51 @@ void VTail_push(VTail *t, Vector2 a) {
 
 typedef struct {
   double y[4];
+  double t;
   VTail tail;
   Color color;
+  gsl_odeiv2_driver *driver;
 } Planet;
 
-Planet *Planet_alloc(Color color, Vector2 pos, Vector2 vel) {
+Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color,
+                     gsl_odeiv2_driver *driver) {
   Planet *out = calloc(1, sizeof(Planet));
-  out->color = color;
   out->y[0] = pos.x;
   out->y[1] = vel.x;
   out->y[2] = pos.y;
   out->y[3] = vel.y;
+  out->color = color;
+  out->tail = VTail_alloc(tail_len);
+  out->driver = driver;
   return out;
+}
+
+void Planet_step(Planet *p, float t_step) {
+  double t = 0;
+  gsl_odeiv2_driver_apply(p->driver, &t, t_step, p->y);
+}
+
+Vector2 Planet_pos(Planet *p) { return V(p->y[0], p->y[2]); }
+
+Vector2 Planet_vel(Planet *p) { return V(p->y[1], p->y[3]); }
+
+void Planet_draw(Planet *p) {
+  float h = 1.0f / 5.0f;
+  DrawCircleV(sim2scr(Planet_pos(p)), 4, MAROON);
+  DrawLineV(sim2scr(Planet_pos(p)),
+            sim2scr(Vsum(Planet_pos(p), Vscale(Planet_vel(p), h))), BLUE);
+  VTail_push(&p->tail, Planet_pos(p));
+  for (int i = 0; i < p->tail.fill; i++) {
+    DrawCircleV(sim2scr(p->tail.data[i]), 1, MAROON);
+  }
+}
+
+void Planet_set(Planet *p, Vector2 pos, Vector2 vel) {
+  p->y[0] = pos.x;
+  p->y[1] = vel.x;
+  p->y[2] = pos.y;
+  p->y[3] = vel.y;
+  VTail_clear(&p->tail);
 }
 
 int main(void) {
@@ -114,9 +142,7 @@ int main(void) {
   gsl_odeiv2_driver *d =
       gsl_odeiv2_driver_alloc_y_new(&sys, gsl_odeiv2_step_rk4, 1e-6, 1e-6, 0.0);
 
-  // Initial Values
-  double t = 0.0;
-  double y[4] = {1.0, 0.0, 0.0, 1.0};
+  Planet *p = Planet_alloc(V(1, 0), V(0, 1), 20, MAROON, d);
 
   // UI state
   int select = 0;
@@ -138,42 +164,18 @@ int main(void) {
       mousePos0 = GetMousePosition();
       select = 1;
       Vector2 a = scr2sim(mousePos0);
-      printf("Selected (%.3f, %.3f)\n", a.x, a.y);
     } else if (select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Vector2 a = scr2sim(mousePos0);
       Vector2 b = scr2sim(GetMousePosition());
-      Vector2 d = Vdiff(b, a);
-      y[0] = a.x;
-      y[1] = d.x;
-      y[2] = a.y;
-      y[3] = d.y;
-      printf("set to (%.3f + %.3f, %.3f + %.3f);\n", y[0], y[1], y[2], y[3]);
+      Planet_set(p, a, Vdiff(b, a));
       select = 0;
-      VTail_clear(&tail);
     }
     if (select) {
       DrawCircleV(mousePos0, 2, MAROON);
       DrawLineV(mousePos0, GetMousePosition(), MAROON);
     } else {
-      double t_next = t + t_step;
-      gsl_odeiv2_driver_apply(d, &t, t_next, y);
-      // printf("sim @ (%.3f + %.3f, %.3f + %.3f);\n", y[0], y[1], y[2], y[3]);
-      Vector2 a = {.x = y[0], .y = y[2]};
-      DrawCircleV(sim2scr(a), 4, MAROON);
-
-      // Draw velocity
-      float h = 5; // v points h frames in advance
-      Vector2 b = {.x = y[0] + h * t_step * y[1],
-                   .y = y[2] + h * t_step * y[3]};
-      DrawLineV(sim2scr(a), sim2scr(b), BLUE);
-
-      // Draw tail
-      if (frame_cnt % tail_skip == 1) {
-        VTail_push(&tail, sim2scr(a));
-      }
-      for (int i = 0; i < tail.fill; i++) {
-        DrawCircleV(tail.data[i], 1, MAROON);
-      }
+      Planet_step(p, t_step);
+      Planet_draw(p);
     }
     Vector2 orig = {0};
     DrawCircleV(sim2scr(orig), 5, BLACK);
