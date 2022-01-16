@@ -13,6 +13,8 @@ typedef struct {
   double vy;
 } VState;
 
+VState VState0 = {0};
+
 typedef struct {
   int n;
   int fill;      // contraint: fill < n
@@ -38,9 +40,9 @@ int func(double t, const double y[], double f[], void *params) {
   PSystem *ps = (PSystem*) params;
   for (int i = 0; i < ps->n; i++) {
     f[4*i + 0] = y[4*i + 1];  // x
-    f[4*i + 1] = -y[4*i + 0]; // x'
+    f[4*i + 1] = y[4*i + 0] * (-1); // x'
     f[4*i + 2] = y[4*i + 3];  // y
-    f[4*i + 3] = -y[4*i + 2]; // y'
+    f[4*i + 3] = y[4*i + 2] * (-1); // y'
   }
   return GSL_SUCCESS;
 }
@@ -190,7 +192,8 @@ void PSystem_add(PSystem *ps, Planet *p) {
   ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
                                              1e-6, 0.0);
 
-  ps->state = calloc(ps->n, sizeof(VState));
+  ps->state = realloc(ps->state, sizeof(VState) * ps->n);
+  ps->state[ps->n - 1] = VState0;
   PSystem_print(ps);
 }
 
@@ -200,18 +203,15 @@ void PSystem_step(PSystem *ps) {
   }
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
-    *(ps->state + i) = p->state;
+    ps->state[i] = p->state;
   }
 
-  printf("STEP\n");
-  PSystem_print(ps);
   double t = 0;
   gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)ps->state);
-  PSystem_print(ps);
 
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
-    p->state = *(ps->state+i);
+    p->state = ps->state[i];
   }
 }
 
