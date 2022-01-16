@@ -21,6 +21,9 @@ const int screenWidth = 800;
 const int screenHeight = 600;
 const float screenScale = 200.0f;
 
+const int FPS = 100;
+const float STEP = 2.0f / (float)FPS;
+
 //
 // Vector Helpers
 //
@@ -47,8 +50,6 @@ Vector2 sim2scr(Vector2 a) {
   return V((float)screenWidth / 2 + a.x * screenScale,
            (float)screenHeight / 2 - a.y * screenScale);
 }
-
-int FPS = 100;
 
 typedef struct {
   int n;
@@ -105,9 +106,9 @@ Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color,
   return out;
 }
 
-void Planet_step(Planet *p, float t_step) {
+void Planet_step(Planet *p) {
   double t = 0;
-  gsl_odeiv2_driver_apply(p->driver, &t, t_step, p->y);
+  gsl_odeiv2_driver_apply(p->driver, &t, STEP, p->y);
 }
 
 Vector2 Planet_pos(Planet *p) { return V(p->y[0], p->y[2]); }
@@ -117,8 +118,8 @@ Vector2 Planet_vel(Planet *p) { return V(p->y[1], p->y[3]); }
 void Planet_draw(Planet *p) {
   float h = 1.0f / 5.0f;
   DrawCircleV(sim2scr(Planet_pos(p)), 4, MAROON);
-  DrawLineV(sim2scr(Planet_pos(p)),
-            sim2scr(Vsum(Planet_pos(p), Vscale(Planet_vel(p), h))), BLUE);
+  // DrawLineV(sim2scr(Planet_pos(p)), sim2scr(Vsum(Planet_pos(p),
+  // Vscale(Planet_vel(p), h))), BLUE);
   VTail_push(&p->tail, Planet_pos(p));
   for (int i = 0; i < p->tail.fill; i++) {
     DrawCircleV(sim2scr(p->tail.data[i]), 1, MAROON);
@@ -133,6 +134,35 @@ void Planet_set(Planet *p, Vector2 pos, Vector2 vel) {
   VTail_clear(&p->tail);
 }
 
+typedef struct {
+  int n;
+  Planet **planets;
+  float center_mass;
+} PSystem;
+
+PSystem *PSystem_alloc(float center_mass) {
+  PSystem *s = calloc(1, sizeof(PSystem));
+  return s;
+}
+
+void PSystem_add(PSystem *ps, Planet *p) {
+  ps->n += 1;
+  ps->planets = realloc(ps->planets, sizeof(Planet *) * ps->n);
+  ps->planets[ps->n - 1] = p;
+}
+
+void PSystem_step(PSystem *ps) {
+  for (int i = 0; i < ps->n; i++) {
+    Planet_step(ps->planets[i]);
+  }
+}
+
+void PSystem_draw(PSystem *ps) {
+  for (int i = 0; i < ps->n; i++) {
+    Planet_draw(ps->planets[i]);
+  }
+}
+
 int main(void) {
   InitWindow(screenWidth, screenHeight, "Raylib Planets");
   SetTargetFPS(FPS);
@@ -142,24 +172,21 @@ int main(void) {
   gsl_odeiv2_driver *d =
       gsl_odeiv2_driver_alloc_y_new(&sys, gsl_odeiv2_step_rk4, 1e-6, 1e-6, 0.0);
 
-  Planet *p = Planet_alloc(V(1, 0), V(0, 1), 20, MAROON, d);
+  // Simulation State
+  PSystem *ps = PSystem_alloc(1);
 
   // UI state
   int select = 0;
-  Vector2 ballPosition = {0};
   Vector2 mousePos0;
-  float t_step = 2.0f / (float)FPS;
-  int tail_len = 100;
-  int tail_skip = 2;
-  VTail tail = VTail_alloc(tail_len);
-  int frame_cnt = 0;
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
-    frame_cnt += 1;
+
     BeginDrawing();
     ClearBackground(RAYWHITE);
-
+    if (IsKeyReleased(KEY_F)) {
+      ToggleFullscreen();
+    }
     if (!select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       mousePos0 = GetMousePosition();
       select = 1;
@@ -167,18 +194,18 @@ int main(void) {
     } else if (select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Vector2 a = scr2sim(mousePos0);
       Vector2 b = scr2sim(GetMousePosition());
-      Planet_set(p, a, Vdiff(b, a));
+      PSystem_add(ps, Planet_alloc(a, Vdiff(b, a), 50, MAROON, d));
       select = 0;
     }
     if (select) {
       DrawCircleV(mousePos0, 2, MAROON);
       DrawLineV(mousePos0, GetMousePosition(), MAROON);
-    } else {
-      Planet_step(p, t_step);
-      Planet_draw(p);
     }
-    Vector2 orig = {0};
-    DrawCircleV(sim2scr(orig), 5, BLACK);
+    PSystem_step(ps);
+    PSystem_draw(ps);
+
+    // Center
+    DrawCircleV(sim2scr(V(0, 0)), 5, BLACK);
     EndDrawing();
   }
 
