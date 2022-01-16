@@ -86,7 +86,7 @@ void VTail_push(VTail *t, Vector2 a) {
 }
 
 typedef struct {
-  double y[4];
+  double *y;
   double t;
   VTail tail;
   Color color;
@@ -94,6 +94,7 @@ typedef struct {
 
 Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color) {
   Planet *out = calloc(1, sizeof(Planet));
+  out->y = calloc(4, sizeof(double));
   out->y[0] = pos.x;
   out->y[1] = vel.x;
   out->y[2] = pos.y;
