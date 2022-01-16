@@ -90,11 +90,9 @@ typedef struct {
   double t;
   VTail tail;
   Color color;
-  gsl_odeiv2_driver *driver;
 } Planet;
 
-Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color,
-                     gsl_odeiv2_driver *driver) {
+Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color) {
   Planet *out = calloc(1, sizeof(Planet));
   out->y[0] = pos.x;
   out->y[1] = vel.x;
@@ -102,13 +100,12 @@ Planet *Planet_alloc(Vector2 pos, Vector2 vel, int tail_len, Color color,
   out->y[3] = vel.y;
   out->color = color;
   out->tail = VTail_alloc(tail_len);
-  out->driver = driver;
   return out;
 }
 
-void Planet_step(Planet *p) {
+void Planet_step(Planet *p, gsl_odeiv2_driver *d) {
   double t = 0;
-  gsl_odeiv2_driver_apply(p->driver, &t, STEP, p->y);
+  gsl_odeiv2_driver_apply(d, &t, STEP, p->y);
 }
 
 Vector2 Planet_pos(Planet *p) { return V(p->y[0], p->y[2]); }
@@ -138,11 +135,20 @@ typedef struct {
   int n;
   Planet **planets;
   float center_mass;
+  gsl_odeiv2_system *sys;
+  gsl_odeiv2_driver *driver;
 } PSystem;
 
 PSystem *PSystem_alloc(float center_mass) {
-  PSystem *s = calloc(1, sizeof(PSystem));
-  return s;
+  PSystem *ps = calloc(1, sizeof(PSystem));
+  ps->sys = calloc(1, sizeof(gsl_odeiv2_system));
+  ps->sys->function = func;
+  ps->sys->jacobian = NULL;
+  ps->sys->dimension = 4;
+  ps->sys->params = ps;
+  ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
+                                             1e-6, 0.0);
+  return ps;
 }
 
 void PSystem_add(PSystem *ps, Planet *p) {
@@ -153,7 +159,7 @@ void PSystem_add(PSystem *ps, Planet *p) {
 
 void PSystem_step(PSystem *ps) {
   for (int i = 0; i < ps->n; i++) {
-    Planet_step(ps->planets[i]);
+    Planet_step(ps->planets[i], ps->driver);
   }
 }
 
@@ -166,11 +172,6 @@ void PSystem_draw(PSystem *ps) {
 int main(void) {
   InitWindow(screenWidth, screenHeight, "Raylib Planets");
   SetTargetFPS(FPS);
-
-  int params = 10;
-  gsl_odeiv2_system sys = {func, NULL, 4, &params};
-  gsl_odeiv2_driver *d =
-      gsl_odeiv2_driver_alloc_y_new(&sys, gsl_odeiv2_step_rk4, 1e-6, 1e-6, 0.0);
 
   // Simulation State
   PSystem *ps = PSystem_alloc(1);
@@ -194,7 +195,7 @@ int main(void) {
     } else if (select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Vector2 a = scr2sim(mousePos0);
       Vector2 b = scr2sim(GetMousePosition());
-      PSystem_add(ps, Planet_alloc(a, Vdiff(b, a), 50, MAROON, d));
+      PSystem_add(ps, Planet_alloc(a, Vdiff(b, a), 50, MAROON));
       select = 0;
     }
     if (select) {
