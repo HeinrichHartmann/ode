@@ -2,10 +2,14 @@ LIBS = raylib gsl
 LDFLAGS=-all-static $(shell pkg-config --libs $(LIBS))
 CFLAGS=-O0 -g $(shell pkg-config --cflags $(LIBS))
 
-all: main gsl_ode ray ray.html ray_ode
+build: ray_planet.html
+	mkdir -p build
+	mv ray_planet{.wasm,.js,.html} build
+
+deploy: build
+	rsync -av ./build/ root@192.168.2.12:/share/hhartmann/attic/www
 
 %.html: %.c
-	# clang gsl_ex.c -o example -O2 --target=wasm32-wasi
 	emcc -o $@ $< \
 	-Os \
 	-I/opt/gsl-2.6/include -L/opt/gsl-2.6/lib -lgsl -lm -lc \

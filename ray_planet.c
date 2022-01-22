@@ -2,6 +2,8 @@
 #include <math.h>
 #include <string.h>
 
+#define RAYGUI_IMPLEMENTATION
+#include "extras/raygui.h"
 #include <gsl/gsl_errno.h>
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_odeiv2.h>
@@ -41,8 +43,13 @@ const int screenWidth = 1600;
 const int screenHeight = 900;
 const float screenScale = 200.0f;
 
-const int FPS = 100;
+const int FPS = 60;
 const float STEP = 5.0f / (float)FPS;
+
+char FPS_STR[100];
+
+int GRAVITY = 100;
+int INTERACTION = 10;
 
 int func(double t, const double y[], double f[], void *params) {
   (void)(t); /* avoid unused parameter warning */
@@ -57,7 +64,7 @@ int func(double t, const double y[], double f[], void *params) {
   }
 
   // Gravity towards center
-  float M = 0.1;
+  float M = 0.1 * (float)GRAVITY / 100.0f;
   for (int i = 0; i < ps->n; i++) {
     double r3 = pow(pow(y[4 * i + 0], 2) + pow(y[4 * i + 2], 2), 3.f / 2.f);
     if (r3 > 1e-6) {
@@ -67,7 +74,7 @@ int func(double t, const double y[], double f[], void *params) {
   }
 
   // Interactions
-  float C = 0;
+  float C = 0.01 * (float)INTERACTION / 100.0f;
   if (C > 0) {
     for (int i = 0; i < ps->n; i++) {
       for (int j = 0; j < i; j++) {
@@ -190,10 +197,12 @@ void Planet_reflect(Planet *p) {
 
 double scr_mod(double x, double sz) {
   sz = fabs(sz); // sz may be negative
-  double y = fmod(x + sz, 2*sz) - sz;
+  double y = fmod(x + sz, 2 * sz) - sz;
   // fix "quadrant"
-  while (y < -sz) y += 2*sz;
-  while (y > +sz) y -= 2*sz;
+  while (y < -sz)
+    y += 2 * sz;
+  while (y > +sz)
+    y -= 2 * sz;
   return y;
 }
 
@@ -202,7 +211,6 @@ void Planet_move(Planet *p) {
   p->state.x = scr_mod(p->state.x, scr.x);
   p->state.y = scr_mod(p->state.y, scr.y);
 }
-
 
 void Planet_draw(Planet *p) {
   float h = 1.0f / 5.0f;
@@ -282,7 +290,6 @@ void PSystem_step(PSystem *ps) {
     p->state = ps->state[i];
     // Planet_reflect(p);
     Planet_move(p);
-
   }
 }
 
@@ -316,8 +323,25 @@ int main(void) {
 
     BeginDrawing();
     ClearBackground(RAYWHITE);
+
+    INTERACTION = GuiSliderBar((Rectangle){600, 40, 120, 20}, "Interaction",
+                               NULL, INTERACTION, -450, 450);
+    GRAVITY = GuiSliderBar((Rectangle){600, 70, 120, 20}, "EndAngle", NULL,
+                           GRAVITY, -450, 450);
+
+    if (IsKeyReleased(KEY_Q)) {
+      CloseWindow();
+    }
     if (IsKeyReleased(KEY_F)) {
       ToggleFullscreen();
+    }
+    if (IsKeyReleased(KEY_R)) {
+      ps = PSystem_alloc();
+    }
+    if (IsKeyReleased(KEY_S)) {
+      Vector2 a = V(randf(2), randf(2));
+      Vector2 v = V(randf(.05), randf(.05));
+      PSystem_add(ps, Planet_alloc(a, v));
     }
     if (!select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       mousePos0 = GetMousePosition();
@@ -338,6 +362,7 @@ int main(void) {
 
     // Center
     DrawCircleV(sim2scr(V(0, 0)), 5, BLACK);
+    DrawFPS(0, 0);
     EndDrawing();
   }
 
