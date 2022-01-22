@@ -2,8 +2,6 @@
 #include <math.h>
 #include <string.h>
 
-#define RAYGUI_IMPLEMENTATION
-#include "extras/raygui.h"
 #include <gsl/gsl_errno.h>
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_odeiv2.h>
@@ -323,11 +321,6 @@ int main(void) {
 
     BeginDrawing();
     ClearBackground(RAYWHITE);
-
-    INTERACTION = GuiSliderBar((Rectangle){600, 40, 120, 20}, "Interaction",
-                               NULL, INTERACTION, -450, 450);
-    GRAVITY = GuiSliderBar((Rectangle){600, 70, 120, 20}, "EndAngle", NULL,
-                           GRAVITY, -450, 450);
 
     if (IsKeyReleased(KEY_Q)) {
       CloseWindow();
