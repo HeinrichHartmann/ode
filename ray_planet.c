@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include <math.h>
 #include <string.h>
 
 #include <gsl/gsl_errno.h>
@@ -35,43 +36,57 @@ typedef struct {
   gsl_odeiv2_driver *driver;
 } PSystem;
 
+// Screen Coordinate System with letters P,Q,..
+const int screenWidth = 1600;
+const int screenHeight = 900;
+const float screenScale = 200.0f;
+
+const int FPS = 100;
+const float STEP = 5.0f / (float)FPS;
+
 int func(double t, const double y[], double f[], void *params) {
   (void)(t); /* avoid unused parameter warning */
-  PSystem *ps = (PSystem*) params;
+  PSystem *ps = (PSystem *)params;
 
   memset(f, 0, sizeof(double) * ps->n * 4);
 
   // INIT
   for (int i = 0; i < ps->n; i++) {
-    f[4*i + 0] = y[4*i + 1];
-    f[4*i + 2] = y[4*i + 3];
+    f[4 * i + 0] = y[4 * i + 1];
+    f[4 * i + 2] = y[4 * i + 3];
   }
+
   // Gravity towards center
-  float M = 0;
+  float M = 0.1;
   for (int i = 0; i < ps->n; i++) {
-    f[4*i + 1] += y[4*i + 0] * (-1) * M;
-    f[4*i + 3] += y[4*i + 2] * (-1) * M;
+    double r3 = pow(pow(y[4 * i + 0], 2) + pow(y[4 * i + 2], 2), 3.f / 2.f);
+    if (r3 > 1e-6) {
+      f[4 * i + 1] += y[4 * i + 0] / r3 * (-1) * M;
+      f[4 * i + 3] += y[4 * i + 2] / r3 * (-1) * M;
+    }
   }
+
   // Interactions
-  float C = 0.1;
-  for (int i = 0; i < ps->n; i++) {
-    for (int j = 0; j < ps->n; j++) {
-      if (i != j) {
-        f[4*i + 1] += - C * (y[4*i + 0] - y[4*j + 0]); // x'
-        f[4*i + 3] += - C * (y[4*i + 2] - y[4*j + 0]); // y'
+  float C = 0;
+  if (C > 0) {
+    for (int i = 0; i < ps->n; i++) {
+      for (int j = 0; j < i; j++) {
+        if (i != j) {
+          double dx = y[4 * j + 0] - y[4 * i + 0]; // from i -> j
+          double dy = y[4 * j + 2] - y[4 * i + 2];
+          double r3 = pow(pow(dx, 2) + pow(dy, 2), 3.f / 2.f);
+          if (r3 > 1e-6) {
+            f[4 * i + 1] += C * dx / r3;
+            f[4 * i + 3] += C * dy / r3;
+            f[4 * j + 1] += -C * dx / r3;
+            f[4 * j + 3] += -C * dy / r3;
+          }
+        }
       }
     }
   }
   return GSL_SUCCESS;
 }
-
-// Screen Coordinate System with letters P,Q,..
-const int screenWidth = 800;
-const int screenHeight = 600;
-const float screenScale = 200.0f;
-
-const int FPS = 100;
-const float STEP = 2.0f / (float)FPS;
 
 //
 // Vector Helpers
@@ -159,19 +174,35 @@ Vector2 Planet_pos(Planet *p) { return V(p->state.x, p->state.y); }
 Vector2 Planet_vel(Planet *p) { return V(p->state.vx, p->state.vy); }
 
 void Planet_reflect(Planet *p) {
-  if(sim2scr(Planet_pos(p)).x < 0) {
+  if (sim2scr(Planet_pos(p)).x < 0) {
     p->state.vx = -p->state.vx;
   }
-  if(sim2scr(Planet_pos(p)).y < 0) {
+  if (sim2scr(Planet_pos(p)).y < 0) {
     p->state.vy = -p->state.vy;
   }
-  if(sim2scr(Planet_pos(p)).x > screenWidth) {
+  if (sim2scr(Planet_pos(p)).x > screenWidth) {
     p->state.vx = -p->state.vx;
   }
-  if(sim2scr(Planet_pos(p)).y > screenHeight) {
+  if (sim2scr(Planet_pos(p)).y > screenHeight) {
     p->state.vy = -p->state.vy;
   }
 }
+
+double scr_mod(double x, double sz) {
+  sz = fabs(sz); // sz may be negative
+  double y = fmod(x + sz, 2*sz) - sz;
+  // fix "quadrant"
+  while (y < -sz) y += 2*sz;
+  while (y > +sz) y -= 2*sz;
+  return y;
+}
+
+void Planet_move(Planet *p) {
+  Vector2 scr = scr2sim(V(screenWidth, screenHeight));
+  p->state.x = scr_mod(p->state.x, scr.x);
+  p->state.y = scr_mod(p->state.y, scr.y);
+}
+
 
 void Planet_draw(Planet *p) {
   float h = 1.0f / 5.0f;
@@ -223,12 +254,11 @@ void PSystem_add(PSystem *ps, Planet *p) {
   ps->sys->jacobian = NULL;
   ps->sys->dimension = ps->n * 4;
   ps->sys->params = ps;
-  ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-6,
-                                             1e-6, 0.0);
+  ps->driver = gsl_odeiv2_driver_alloc_y_new(ps->sys, gsl_odeiv2_step_rk4, 1e-5,
+                                             1e-5, 0.0);
 
   ps->state = realloc(ps->state, sizeof(VState) * ps->n);
   ps->state[ps->n - 1] = VState0;
-  PSystem_print(ps);
 }
 
 void PSystem_step(PSystem *ps) {
@@ -241,12 +271,18 @@ void PSystem_step(PSystem *ps) {
   }
 
   double t = 0;
-  gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)ps->state);
+  int o = gsl_odeiv2_driver_apply(ps->driver, &t, STEP, (double *)ps->state);
+  if (o != GSL_SUCCESS) {
+    printf("Simulation error at t=%.3f\n", t);
+    exit(1);
+  }
 
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
     p->state = ps->state[i];
-    Planet_reflect(p);
+    // Planet_reflect(p);
+    Planet_move(p);
+
   }
 }
 
@@ -256,6 +292,7 @@ void PSystem_draw(PSystem *ps) {
   }
 }
 
+float randf(float a) { return 2 * a * (float)rand() / (float)RAND_MAX - a; }
 
 int main(void) {
   InitWindow(screenWidth, screenHeight, "Raylib Planets");
@@ -267,6 +304,12 @@ int main(void) {
   // UI state
   int select = 0;
   Vector2 mousePos0;
+
+  for (int i = 0; i < 0; i++) {
+    Vector2 a = V(randf(2), randf(2));
+    Vector2 v = V(randf(.05), randf(.05));
+    PSystem_add(ps, Planet_alloc(a, v));
+  }
 
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
