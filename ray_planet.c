@@ -1,11 +1,16 @@
-#include "raylib.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <gsl/gsl_errno.h>
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_odeiv2.h>
-#include <stdio.h>
+#include <gsl/gsl_randist.h>
+#include <gsl/gsl_rng.h>
+
+#include "raylib.h"
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h" // Required for GUI controls
 
 typedef struct {
   double x;
@@ -37,17 +42,16 @@ typedef struct {
 } PSystem;
 
 // Screen Coordinate System with letters P,Q,..
-const int screenWidth = 1600;
-const int screenHeight = 900;
-const float screenScale = 200.0f;
+int screenWidth = 1600;
+int screenHeight = 900;
+gsl_rng *rng;
 
 const int FPS = 60;
 const float STEP = 5.0f / (float)FPS;
 
-char FPS_STR[100];
-
-int GRAVITY = 100;
-int INTERACTION = 10;
+int GRAVITY = 10;
+int INTERACTION = 50;
+int SCALE = 0;
 
 int func(double t, const double y[], double f[], void *params) {
   (void)(t); /* avoid unused parameter warning */
@@ -62,7 +66,7 @@ int func(double t, const double y[], double f[], void *params) {
   }
 
   // Gravity towards center
-  float M = 0.1 * (float)GRAVITY / 100.0f;
+  float M = (float)GRAVITY / 100.0f;
   for (int i = 0; i < ps->n; i++) {
     double r3 = pow(pow(y[4 * i + 0], 2) + pow(y[4 * i + 2], 2), 3.f / 2.f);
     if (r3 > 1e-6) {
@@ -72,8 +76,8 @@ int func(double t, const double y[], double f[], void *params) {
   }
 
   // Interactions
-  float C = 0.01 * (float)INTERACTION / 100.0f;
-  if (C > 0) {
+  float C = 0.01 * (INTERACTION - 50);
+  if (C != 0) {
     for (int i = 0; i < ps->n; i++) {
       for (int j = 0; j < i; j++) {
         if (i != j) {
@@ -111,13 +115,14 @@ Vector2 Vscale(Vector2 a, float s) { return V(a.x * s, a.y * s); }
 
 // Simulation coordinates around 0. Letter a,b
 Vector2 scr2sim(Vector2 P) {
-  return V((P.x - (float)screenWidth / 2) / screenScale,
-           -(P.y - (float)screenHeight / 2) / screenScale);
+  float s = (float)SCALE * 20.f + 200;
+  return V((P.x - (float)screenWidth / 2) / s,
+           -(P.y - (float)screenHeight / 2) / s);
 }
 
 Vector2 sim2scr(Vector2 a) {
-  return V((float)screenWidth / 2 + a.x * screenScale,
-           (float)screenHeight / 2 - a.y * screenScale);
+  float s = (float)SCALE * 20.f + 200;
+  return V((float)screenWidth / 2 + a.x * s, (float)screenHeight / 2 - a.y * s);
 }
 //
 // VTail
@@ -211,14 +216,18 @@ void Planet_move(Planet *p) {
 }
 
 void Planet_draw(Planet *p) {
-  float h = 1.0f / 5.0f;
-  DrawCircleV(sim2scr(Planet_pos(p)), 4, MAROON);
+  Color c = BLUE;
+  if (INTERACTION < 50) {
+    c = MAROON;
+  }
+  float sz = 0.3f * abs(INTERACTION - 50);
+  DrawCircleV(sim2scr(Planet_pos(p)), sz, c);
 
-  // DrawLineV(sim2scr(Planet_pos(p)), sim2scr(Vsum(Planet_pos(p),
-  // Vscale(Planet_vel(p), h))), BLUE);
   VTail_push(p->tail, Planet_pos(p));
-  for (int i = 0; i < p->tail->fill; i++) {
-    DrawCircleV(sim2scr(p->tail->data[i]), 1, MAROON);
+  int n = p->tail->fill;
+  for (int i = 0; i < n; i++) {
+    float f = 1 - (float)i / (float)n;
+    DrawCircleV(sim2scr(p->tail->data[i]), 1, Fade(c, f));
   }
 }
 
@@ -297,11 +306,76 @@ void PSystem_draw(PSystem *ps) {
   }
 }
 
+void PSystem_freeze(PSystem *ps, float s) {
+  for (int i = 0; i < ps->n; i++) {
+    ps->planets[i]->state.vx *= s;
+    ps->planets[i]->state.vy *= s;
+  }
+}
+
+float PSystem_energy(PSystem *ps) {
+  float e = 0;
+  for (int i = 0; i < ps->n; i++) {
+    Planet *p = ps->planets[i];
+    e += pow(p->state.vx, 2), pow(p->state.vy, 2);
+  }
+  return e;
+}
+
+void PSystem_shock(PSystem *ps, float sigma) {
+  float e = sqrt(PSystem_energy(ps));
+  for (int i = 0; i < ps->n; i++) {
+    ps->planets[i]->state.vx += gsl_ran_gaussian(rng, e * sigma);
+    ps->planets[i]->state.vy += gsl_ran_gaussian(rng, e * sigma);
+  }
+}
+
+void PSystem_center(PSystem *ps) {
+  float cx = 0, cy = 0, cvx = 0, cvy = 0;
+  for (int i = 0; i < ps->n; i++) {
+    cx += ps->planets[i]->state.x;
+    cy += ps->planets[i]->state.y;
+    cvx += ps->planets[i]->state.vx;
+    cvy += ps->planets[i]->state.vy;
+  }
+  cx = cx / ps->n;
+  cy = cy / ps->n;
+  cvx = cvx / ps->n;
+  cvy = cvy / ps->n;
+  printf("C %f %f\n", cvx, cvy);
+  for (int i = 0; i < ps->n; i++) {
+    ps->planets[i]->state.x -= cx;
+    ps->planets[i]->state.y -= cy;
+    ps->planets[i]->state.vx -= cvx;
+    ps->planets[i]->state.vy -= cvy;
+  }
+}
+
 float randf(float a) { return 2 * a * (float)rand() / (float)RAND_MAX - a; }
 
+void key_ctrl(int *x, int key) {
+  if (IsKeyDown(key)) {
+    int d = IsKeyDown(KEY_LEFT_SHIFT) ? -1 : 1;
+    *x += d;
+    if (*x < 0)
+      *x = 0;
+    if (*x > 100)
+      *x = 100;
+  }
+}
+
 int main(void) {
-  InitWindow(screenWidth, screenHeight, "Raylib Planets");
-  SetTargetFPS(FPS);
+  // SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+  SetConfigFlags(FLAG_VSYNC_HINT);
+
+  InitWindow(0, 0, "Raylib Planets");
+  ToggleFullscreen();
+  screenWidth = GetScreenWidth();
+  screenHeight = GetScreenHeight();
+  printf("S SZ %d %d\n", screenWidth, screenHeight);
+
+  // SetTargetFPS(FPS);
+  rng = gsl_rng_alloc(gsl_rng_taus);
 
   // Simulation State
   PSystem *ps = PSystem_alloc();
@@ -309,31 +383,56 @@ int main(void) {
   // UI state
   int select = 0;
   Vector2 mousePos0;
-
-  for (int i = 0; i < 0; i++) {
-    Vector2 a = V(randf(2), randf(2));
-    Vector2 v = V(randf(.05), randf(.05));
-    PSystem_add(ps, Planet_alloc(a, v));
-  }
-
   while (!WindowShouldClose()) // Detect window close button or ESC key
   {
+    if (IsKeyReleased(KEY_F)) {
+      int monitor = GetCurrentMonitor();
+      screenHeight = GetMonitorHeight(monitor);
+      screenWidth = GetMonitorWidth(monitor);
+      SetWindowSize(screenWidth, screenHeight);
+      printf("S SZ %d %d\n", screenWidth, screenHeight);
+      ToggleFullscreen();
+    }
+    // Center
+    DrawCircleV(sim2scr(V(0, 0)), 5 * GRAVITY / 10.0f, YELLOW);
+
+    screenWidth = GetScreenWidth();
+    screenHeight = GetScreenHeight();
 
     BeginDrawing();
-    ClearBackground(RAYWHITE);
+    ClearBackground(BLACK);
+
+    if (IsWindowResized()) {
+      screenWidth = GetScreenWidth();
+      screenHeight = GetScreenHeight();
+    }
+
+    DrawRectangleLines(10, 10, screenWidth - 20, screenHeight - 20, RAYWHITE);
+
+    key_ctrl(&GRAVITY, KEY_ONE);
+    key_ctrl(&INTERACTION, KEY_TWO);
+    key_ctrl(&SCALE, KEY_THREE);
+    if (IsKeyPressed(KEY_NINE))
+      PSystem_shock(ps, 1.05);
+    if (IsKeyDown(KEY_ZERO))
+      PSystem_freeze(ps, 0.9);
+
+    if (IsKeyReleased(KEY_C)) {
+      PSystem_center(ps);
+    }
 
     if (IsKeyReleased(KEY_Q)) {
       CloseWindow();
     }
-    if (IsKeyReleased(KEY_F)) {
-      ToggleFullscreen();
-    }
     if (IsKeyReleased(KEY_R)) {
       ps = PSystem_alloc();
     }
-    if (IsKeyReleased(KEY_S)) {
-      Vector2 a = V(randf(2), randf(2));
-      Vector2 v = V(randf(.05), randf(.05));
+    if (IsKeyPressed(KEY_S)) {
+      float sigma = 1.2;
+      float v_sigma = 0.2;
+      Vector2 a = V(gsl_ran_gaussian(rng, sigma), gsl_ran_gaussian(rng, sigma));
+      Vector2 v =
+          V(gsl_ran_gaussian(rng, v_sigma), gsl_ran_gaussian(rng, v_sigma));
       PSystem_add(ps, Planet_alloc(a, v));
     }
     if (!select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -353,9 +452,7 @@ int main(void) {
     PSystem_step(ps);
     PSystem_draw(ps);
 
-    // Center
-    DrawCircleV(sim2scr(V(0, 0)), 5, BLACK);
-    DrawFPS(0, 0);
+    DrawFPS(15, 15);
     EndDrawing();
   }
 
