@@ -14,7 +14,7 @@ src/gsl:
 
 build/gsl: src/gsl
 	mkdir -p build
-	cd src/gsl; ./configure --prefix=$$(pwd)/build/gsl; make; make install
+	DST=$$(pwd)/build; cd src/gsl && ./configure --prefix=$$DST/gsl && make -j && make install
 
 src/raylib:
 	mkdir -p src
@@ -28,15 +28,11 @@ build/libraylib.a: src/raylib
 	cd src/raylib/src; make PLATFORM=PLATFORM_DRM
 	cp src/raylib/src/libraylib.a $@
 
-# DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends lxterminal gvfs
-# sudo apt-get install -y libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxi-dev libasound2-dev mesa-common-dev libgl1-mesa-dev
-# cd raylib/src; make PLATFORM=PLATFORM_DRM
-
 ray_planet: ray_planet.c build/gsl build/libraylib.a
 	gcc -o ray_planet ray_planet.c build/libraylib.a \
 		 -Wall -std=c99 -D_DEFAULT_SOURCE -Wno-missing-braces -Wunused-result -s -O1 -std=gnu99 -DEGL_NO_X11 \
-		-I. -I/usr/include/libdrm -I/opt/gsl/include -I./raylib/src \
-		-L. -L./raylib/src -L/opt/gsl/lib -L \
+		-I. -I/usr/include/libdrm -I./src/raylib/src -I./build/gsl/include \
+		-L. -L./build/gsl/lib -L./build -L \
 		-lraylib -lGLESv2 -lEGL -lpthread -lrt -lm -lgbm -ldrm -ldl -lgsl -lgslcblas -lm \
 		-DPLATFORM_DRM
 
