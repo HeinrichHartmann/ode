@@ -9,6 +9,10 @@ build: ray_planet.html
 deploy: build
 	rsync -av ./build/ root@192.168.2.12:/share/hhartmann/attic/www
 
+deploy-rpi:
+	rsync -av . 'hhartmann@rpi-kids:ode/'
+	ssh -t hhartmann@rpi-kids -- 'cd ode && ./rpi-run.sh'
+
 %.html: %.c
 	emcc -o $@ $< \
 	-Os \

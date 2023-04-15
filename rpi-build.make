@@ -4,7 +4,6 @@ all: ray_planet
 prep:
 	sudo apt-get install -y wget build-essential libdrm-dev libegl1-mesa-dev libgles2-mesa-dev libgbm-dev
 
-
 src/gsl:
 	mkdir -p src
 	wget https://ftp.gnu.org/gnu/gsl/gsl-2.7.tar.gz
@@ -25,7 +24,7 @@ src/raylib:
 
 build/libraylib.a: src/raylib
 	mkdir -p build
-	cd src/raylib/src; make PLATFORM=PLATFORM_DRM
+	cd src/raylib/src; make -j PLATFORM=PLATFORM_DRM
 	cp src/raylib/src/libraylib.a $@
 
 ray_planet: ray_planet.c build/gsl build/libraylib.a
@@ -36,3 +35,5 @@ ray_planet: ray_planet.c build/gsl build/libraylib.a
 		-lraylib -lGLESv2 -lEGL -lpthread -lrt -lm -lgbm -ldrm -ldl -lgsl -lgslcblas -lm \
 		-DPLATFORM_DRM
 
+run: ray_planet
+	LD_LIBRARY_PATH=./build/gsl/lib ./ray_planet

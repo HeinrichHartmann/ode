@@ -49,20 +49,22 @@ gsl_rng *rng;
 const int FPS = 60;
 const float STEP = 5.0f / (float)FPS;
 
-int GRAVITY = 10;
+int GRAVITY = 0;
 int INTERACTION = 50;
 int SCALE = 0;
+int TOPOLOGY = 0; // 0: rectangle / 1: torus
 
-int func(double t, const double y[], double f[], void *params) {
+// Evaluate function at time t, state y and store result in dydt
+int func(double t, const double y[], double dydt[], void *params) {
   (void)(t); /* avoid unused parameter warning */
   PSystem *ps = (PSystem *)params;
 
-  memset(f, 0, sizeof(double) * ps->n * 4);
+  memset(dydt, 0, sizeof(double) * ps->n * 4);
 
   // INIT
   for (int i = 0; i < ps->n; i++) {
-    f[4 * i + 0] = y[4 * i + 1];
-    f[4 * i + 2] = y[4 * i + 3];
+    dydt[4 * i + 0] = y[4 * i + 1];
+    dydt[4 * i + 2] = y[4 * i + 3];
   }
 
   // Gravity towards center
@@ -70,8 +72,8 @@ int func(double t, const double y[], double f[], void *params) {
   for (int i = 0; i < ps->n; i++) {
     double r3 = pow(pow(y[4 * i + 0], 2) + pow(y[4 * i + 2], 2), 3.f / 2.f);
     if (r3 > 1e-6) {
-      f[4 * i + 1] += y[4 * i + 0] / r3 * (-1) * M;
-      f[4 * i + 3] += y[4 * i + 2] / r3 * (-1) * M;
+      dydt[4 * i + 1] += y[4 * i + 0] / r3 * (-1) * M;
+      dydt[4 * i + 3] += y[4 * i + 2] / r3 * (-1) * M;
     }
   }
 
@@ -85,10 +87,10 @@ int func(double t, const double y[], double f[], void *params) {
           double dy = y[4 * j + 2] - y[4 * i + 2];
           double r3 = pow(pow(dx, 2) + pow(dy, 2), 3.f / 2.f);
           if (r3 > 1e-6) {
-            f[4 * i + 1] += C * dx / r3;
-            f[4 * i + 3] += C * dy / r3;
-            f[4 * j + 1] += -C * dx / r3;
-            f[4 * j + 3] += -C * dy / r3;
+            dydt[4 * i + 1] += C * dx / r3;
+            dydt[4 * i + 3] += C * dy / r3;
+            dydt[4 * j + 1] += -C * dx / r3;
+            dydt[4 * j + 3] += -C * dy / r3;
           }
         }
       }
@@ -99,6 +101,9 @@ int func(double t, const double y[], double f[], void *params) {
 
 //
 // Vector Helpers
+
+
+
 //
 Vector2 V(float x, float y) {
   Vector2 out;
@@ -184,16 +189,16 @@ Vector2 Planet_pos(Planet *p) { return V(p->state.x, p->state.y); }
 Vector2 Planet_vel(Planet *p) { return V(p->state.vx, p->state.vy); }
 
 void Planet_reflect(Planet *p) {
-  if (sim2scr(Planet_pos(p)).x < 0) {
+  if (sim2scr(Planet_pos(p)).x < 10) {
     p->state.vx = -p->state.vx;
   }
-  if (sim2scr(Planet_pos(p)).y < 0) {
+  if (sim2scr(Planet_pos(p)).y < 10) {
     p->state.vy = -p->state.vy;
   }
-  if (sim2scr(Planet_pos(p)).x > screenWidth) {
+  if (sim2scr(Planet_pos(p)).x > screenWidth - 10) {
     p->state.vx = -p->state.vx;
   }
-  if (sim2scr(Planet_pos(p)).y > screenHeight) {
+  if (sim2scr(Planet_pos(p)).y > screenHeight - 10) {
     p->state.vy = -p->state.vy;
   }
 }
@@ -207,12 +212,6 @@ double scr_mod(double x, double sz) {
   while (y > +sz)
     y -= 2 * sz;
   return y;
-}
-
-void Planet_move(Planet *p) {
-  Vector2 scr = scr2sim(V(screenWidth, screenHeight));
-  p->state.x = scr_mod(p->state.x, scr.x);
-  p->state.y = scr_mod(p->state.y, scr.y);
 }
 
 void Planet_draw(Planet *p) {
@@ -295,8 +294,13 @@ void PSystem_step(PSystem *ps) {
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
     p->state = ps->state[i];
-    // Planet_reflect(p);
-    Planet_move(p);
+    if (TOPOLOGY == 1) { // Torus
+      Vector2 scr = scr2sim(V(screenWidth, screenHeight));
+      p->state.x = scr_mod(p->state.x, scr.x);
+      p->state.y = scr_mod(p->state.y, scr.y);
+    } else { // Reflecting Rectangle
+      Planet_reflect(p);
+    }
   }
 }
 
@@ -317,7 +321,7 @@ float PSystem_energy(PSystem *ps) {
   float e = 0;
   for (int i = 0; i < ps->n; i++) {
     Planet *p = ps->planets[i];
-    e += pow(p->state.vx, 2), pow(p->state.vy, 2);
+    e += 0.5 * pow(p->state.vx, 2), pow(p->state.vy, 2);
   }
   return e;
 }
@@ -352,6 +356,7 @@ void PSystem_center(PSystem *ps) {
 }
 
 float randf(float a) { return 2 * a * (float)rand() / (float)RAND_MAX - a; }
+
 
 void key_ctrl(int *x, int key) {
   if (IsKeyDown(key)) {
@@ -438,7 +443,6 @@ int main(void) {
     if (!select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       mousePos0 = GetMousePosition();
       select = 1;
-      Vector2 a = scr2sim(mousePos0);
     } else if (select && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Vector2 a = scr2sim(mousePos0);
       Vector2 b = scr2sim(GetMousePosition());
@@ -453,6 +457,7 @@ int main(void) {
     PSystem_draw(ps);
 
     DrawFPS(15, 15);
+    DrawText(TextFormat("%2g Energy", PSystem_energy(ps)), 15, 35, 20, GREEN);
     EndDrawing();
   }
 
