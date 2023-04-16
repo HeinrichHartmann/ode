@@ -49,8 +49,8 @@ gsl_rng *rng;
 const int FPS = 60;
 const float STEP = 5.0f / (float)FPS;
 
-int GRAVITY = 0;
-int INTERACTION = 50;
+int GRAVITY = 0; // size of sun
+int INTERACTION = 0;
 int SCALE = 0;
 int TOPOLOGY = 0; // 0: rectangle / 1: torus
 
@@ -78,7 +78,7 @@ int func(double t, const double y[], double dydt[], void *params) {
   }
 
   // Interactions
-  float C = 0.01 * (INTERACTION - 50);
+  float C = 0.01 * INTERACTION;
   if (C != 0) {
     for (int i = 0; i < ps->n; i++) {
       for (int j = 0; j < i; j++) {
@@ -216,10 +216,10 @@ double scr_mod(double x, double sz) {
 
 void Planet_draw(Planet *p) {
   Color c = BLUE;
-  if (INTERACTION < 50) {
+  if (INTERACTION < 0) {
     c = MAROON;
   }
-  float sz = 0.3f * abs(INTERACTION - 50);
+  float sz = 0.3f * abs(INTERACTION);
   DrawCircleV(sim2scr(Planet_pos(p)), sz, c);
 
   VTail_push(p->tail, Planet_pos(p));
@@ -359,13 +359,18 @@ float randf(float a) { return 2 * a * (float)rand() / (float)RAND_MAX - a; }
 
 
 void key_ctrl(int *x, int key) {
-  if (IsKeyDown(key)) {
-    int d = IsKeyDown(KEY_LEFT_SHIFT) ? -1 : 1;
-    *x += d;
-    if (*x < 0)
-      *x = 0;
-    if (*x > 100)
-      *x = 100;
+  if (!IsKeyDown(key)) return;
+  if (IsKeyDown(KEY_LEFT_CONTROL)) {
+    *x = 0;
+    return;
+  }
+  int d = IsKeyDown(KEY_LEFT_SHIFT) ? -1 : 1;
+  *x += d;
+  if (*x < -100) {
+    *x = -100;
+  }
+  if (*x > 100) {
+    *x = 100;
   }
 }
 
@@ -398,8 +403,6 @@ int main(void) {
       printf("S SZ %d %d\n", screenWidth, screenHeight);
       ToggleFullscreen();
     }
-    // Center
-    DrawCircleV(sim2scr(V(0, 0)), 5 * GRAVITY / 10.0f, YELLOW);
 
     screenWidth = GetScreenWidth();
     screenHeight = GetScreenHeight();
@@ -412,7 +415,20 @@ int main(void) {
       screenHeight = GetScreenHeight();
     }
 
+    // Daraw Margin
     DrawRectangleLines(10, 10, screenWidth - 20, screenHeight - 20, RAYWHITE);
+
+    // Draw Sun
+    Color s_color;
+    float s_size = 5 * GRAVITY / 10.0f;;
+    if (GRAVITY > 0) {
+      s_color = YELLOW;
+    } else {
+      s_color = MAROON;
+      s_size *= -1;
+    }
+    DrawCircleV(sim2scr(V(0, 0)), s_size, s_color);
+
 
     key_ctrl(&GRAVITY, KEY_ONE);
     key_ctrl(&INTERACTION, KEY_TWO);
